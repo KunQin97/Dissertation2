@@ -1,0 +1,209 @@
+```{r}
+library(mice)
+library(VIM)
+library(readxl)
+library(lavaan)
+library(psych)
+library(MASS)
+library(leaps)
+library(MVN) 
+raw_data <- read_excel("C:/Users/win10/Desktop/raw data.xlsx")
+View(raw_data)
+```
+
+```{r}
+raw_data_df=data.frame(raw_data)
+#identify the obvious NA for the whole dataset firstly
+raw_data_df[raw_data_df==888]=NA
+#mark the SCQ of ASD children as 15
+raw_data_df$SCQ=ifelse(is.na(raw_data_df$SCQ),15,raw_data_df$SCQ)
+raw_data_df$SCQ[raw_data_df$SCQ==0]=NA
+raw_data_df$wasi_sum_rawscores[raw_data_df$wasi_sum_rawscores==0]=NA
+#there is an invalid number found as below, so we make it as NA
+raw_data_df$pvt_mean_rt[54]=NA
+#switch the types of all variables into numeric
+var_type=function(k){
+  x=vector()
+  n=0
+  for(i in colnames(k)){
+    n=n+1
+    x[[n]]=class(k[,i])
+  }
+  print(x)
+}
+var_type(raw_data_df)
+raw_data_df[,40]=as.numeric(raw_data_df[,40])
+raw_data_df
+```
+
+```{r}
+#find NA pattern
+par(mar=c(2,2,2,2),cex.axis=0.7)
+md.pattern(raw_data_df)
+
+par(mar=c(2,2,2,2),cex.axis=0.7)
+aggr(raw_data_df,prop=T,numbers=T)
+
+par(mar=c(13,4,0,0),cex.axis=0.7)
+matrixplot(raw_data_df)
+``` 
+
+
+
+
+```{r}
+#impute NA
+imp=mice(raw_data_df,seed = 1)
+imputed_data=complete(imp,1)
+imputed_data
+sum(is.na(imputed_data))
+
+```
+
+
+
+
+```{r}
+#standardize the variables
+#length(imputed_data[,2:3])
+std=imputed_data[,-c(1:4)]
+std=std[,-which(colnames(std)%in%c("age_acquisition","where_english"))]
+std=scale(std)
+std=data.frame(std)
+std
+
+
+```
+```{r}
+#CFA
+latent_var='language=~bpvs_raw+vocabprocess_processing_speed_target
+
+social_cognition=~tomi_compmean+tom_tb_totalscore+et_figurestask_dwell_time_interacting
+
+executive_function=~brief_raw_inhibit+brief_raw_initiate+flanker_percenterrors_incongruent+flanker_mean_rt_incongruent+pvt_number_of_lapses'
+
+cfamodel=cfa(latent_var,data=std,std.lv=T,estimator="MLM")
+
+summary(cfamodel,fit.measures=T)
+#look at the data of latent variables
+lavPredict(cfamodel)
+
+```
+
+```{r}
+#create the dataset which will be used for modeling and it includes both original and standardized data
+latent_df=cbind(imputed_data[,c(1:4)],imputed_data[,c("SCQ","age_acquisition","where_english")])
+latent_df=cbind(latent_df,std$wasi_sum_rawscores)
+latent_df=cbind(latent_df,std$bilec_total_input)
+latent_df=cbind(latent_df,std$bilec_total_output)
+latent_df=cbind(latent_df,data.frame(lavPredict(cfamodel)))
+#the new dataset includes latent variables
+colnames(latent_df)[8]="wasi_sum_rawscores"
+colnames(latent_df)[9]="bilec_total_input"
+colnames(latent_df)[10]="bilec_total_output"
+latent_df
+```
+
+```{r}
+# EDA preparation: give the name to the value of the categorical variables
+latent_df_EDA=latent_df
+latent_df_EDA$gender[which(latent_df_EDA$gender==0)]="M"
+latent_df_EDA$gender[which(latent_df_EDA$gender==1)]="F"
+latent_df_EDA$diagnosis[which(latent_df_EDA$diagnosis==0)]="Non-autistic"
+latent_df_EDA$diagnosis[which(latent_df_EDA$diagnosis==1)]="Autistic"
+latent_df_EDA$where_english[which(latent_df_EDA$where_english==1)]="Home"
+latent_df_EDA$where_english[which(latent_df_EDA$where_english==2)]="Nursery"
+latent_df_EDA$where_english[which(latent_df_EDA$where_english==3)]="Playgroup"
+latent_df_EDA$where_english[which(latent_df_EDA$where_english==4)]="School"
+latent_df_EDA
+
+#study on ADS children
+ASD_latent_df_EDA=latent_df_EDA[which(latent_df_EDA$diagnosis=="Autistic"),]
+ASD_latent_df_EDA
+
+attach(ASD_latent_df_EDA)
+#classify by English-studying position
+par(mfrow=c(3,2))
+boxplot(bilec_total_input~where_english)
+boxplot(bilec_total_output~where_english)
+boxplot(language~where_english)
+boxplot(social_cognition~where_english)
+boxplot(executive_function~where_english)
+#classify by gender
+par(mfrow=c(2,2))
+boxplot(wasi_sum_rawscores~gender)
+boxplot(language~gender)
+boxplot(social_cognition~gender)
+boxplot(executive_function~gender)
+
+#compare autistic and non-autistic children 
+par(mfrow=c(2,2))
+boxplot(language~diagnosis,data = latent_df_EDA)
+boxplot(social_cognition~diagnosis,data = latent_df_EDA)
+boxplot(executive_function~diagnosis,data = latent_df_EDA)
+boxplot(wasi_sum_rawscores~diagnosis,data=latent_df_EDA)
+```
+
+```{r}
+#explore if language is related with bilingual exposure and which variables affect it most significantly
+ASD_latent_df=latent_df[which(latent_df$diagnosis==1),]
+
+language_fit=lm(language~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = ASD_latent_df)
+language_fit=stepAIC(language_fit,direction = "backward")
+summary(language_fit)
+language_fit
+plot(language_fit)
+```
+
+
+```{r}
+#explore if social cognition is related with bilingual exposure and and which variables affect it most significantly
+social_fit=lm(social_cognition~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = ASD_latent_df)
+social_fit=stepAIC(social_fit,direction = "backward")
+summary(social_fit)
+social_fit
+
+plot(social_fit)
+
+```
+
+
+```{r}
+#explore if executive function is related with bilingual exposure and and which variables affect it most significantly
+executive_fit=lm(executive_function~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = ASD_latent_df)
+executive_fit=stepAIC(executive_fit,direction = "backward")
+summary(executive_fit)
+executive_fit
+
+plot(executive_fit)
+
+```
+
+```{r}
+#check if bilingual exposure provides benefits in three assessments for the whole sample
+#language
+language_fit1=lm(language~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = latent_df)
+language_fit1=stepAIC(language_fit1,direction = "backward")
+summary(language_fit1)
+#social cognition
+social_fit1=lm(social_cognition~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = latent_df)
+social_fit1=stepAIC(social_fit1,direction = "backward")
+summary(social_fit1)
+#executive function
+executive_fit1=lm(executive_function~bilec_total_input+age_m+gender+wasi_sum_rawscores+age_acquisition+where_english,data = latent_df)
+executive_fit1=stepAIC(executive_fit1,direction = "backward")
+summary(executive_fit1)
+
+```
+
+
+```{r}
+# explore if bilingual exposure affects bilingual ability
+bil_input_output_ADS=lm(bilec_total_output~bilec_total_input+language,data = ASD_latent_df)
+bil_input_output_ADS=stepAIC(bil_input_output_ADS,direction = "backward")
+summary(bil_input_output_ADS)
+#plot
+attach(ASD_latent_df)
+plot(bilec_total_input,bilec_total_output)
+abline(bil_input_output_ADS)
+```
